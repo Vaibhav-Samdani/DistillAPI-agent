@@ -16,6 +16,7 @@ from langchain_core.prompts import PromptTemplate
 from langgraph.graph import StateGraph, END
 
 load_dotenv()
+api_key=os.getenv("OPENROUTER_API_KEY")
 
 # ==========================================
 # STATE
@@ -34,7 +35,7 @@ class AgentState(TypedDict, total=False):
 
 llm = ChatOpenAI(
     model="openrouter/hunter-alpha",
-    api_key=os.getenv("OPENAI_API_KEY"),
+    api_key=api_key,
     base_url="https://openrouter.ai/api/v1",
     temperature=0.3
 )

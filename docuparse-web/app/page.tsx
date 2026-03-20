@@ -4,7 +4,7 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { 
   UploadCloud, BrainCircuit, Loader2, FileCheck, 
-  Target, FlaskConical, Sparkles, Rocket, ChevronRight, 
+  Target, FlaskConical, Sparkles, ChevronRight, 
   ThumbsUp, AlertTriangle, Lightbulb, Quote
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,10 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { ScrollArea } from "@/components/ui/scroll-area";
+
+
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+
 
 // --- Types ---
 interface StructuredSummary {
@@ -79,7 +83,7 @@ export default function Home() {
     formData.append("file", file);
 
     try {
-      const response = await fetch("http://localhost:8000/process-paper", {
+      const response = await fetch(`${baseUrl}/process-paper`, {
         method: "POST",
         body: formData,
       });
