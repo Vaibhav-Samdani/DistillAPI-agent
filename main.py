@@ -34,7 +34,9 @@ class AgentState(TypedDict, total=False):
 # ==========================================
 
 llm = ChatOpenAI(
-    model="openrouter/hunter-alpha",
+    # model="openrouter/hunter-alpha",
+    # model="arcee-ai/trinity-large-preview:free",
+    model="stepfun/step-3.5-flash:free",
     api_key=api_key,
     base_url="https://openrouter.ai/api/v1",
     temperature=0.3
@@ -45,12 +47,18 @@ llm = ChatOpenAI(
 # ==========================================
 
 async def safe_invoke(chain, input_data, retries=2):
-    for _ in range(retries):
+    last_exception = None
+    for attempt in range(retries):
         try:
             return await chain.ainvoke(input_data)
-        except Exception:
+        except Exception as e:
+            print(f"⚠️ LLM Error on attempt {attempt + 1}: {str(e)}")
+            last_exception = e
+            await asyncio.sleep(2) # Give the API a quick 2-second breather
             continue
-    raise Exception("LLM failed after retries")
+            
+    # Raise the actual error so it shows up in your FastAPI response!
+    raise Exception(f"LLM failed after retries. Last error: {str(last_exception)}")
 
 def fill_defaults(summary: dict):
     return {
@@ -190,7 +198,12 @@ async def summarize_node(state: AgentState) -> AgentState:
 # 🔥 QA GENERATION (NO JSON FORCING)
 async def generate_qa_node(state: AgentState) -> AgentState:
     prompt = PromptTemplate.from_template(
-        "Generate exactly 3 deep questions to test a reader's understanding of this paper, along with their answers.\n\n"
+        "You are an expert academic tutor. Your goal is to educate a reader who has NOT read the original paper.\n\n"
+        "Generate exactly 5 insightful question-answer pairs that break down the paper's core concepts, methodology, and implications.\n\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. Act as a 'guided tour'. The questions should logically flow from basic understanding to deep technical nuances.\n"
+        "2. Anticipate confusion. Ask 'Why did they use this specific method?' or 'How does this solve the core problem?'\n"
+        "3. The answers MUST be highly descriptive, easy to understand, and provide enough context that a complete beginner grasps the paper's true value.\n\n"
         "You MUST format your response strictly like this:\n"
         "Q1: [Your first question]\n"
         "A1: [Your first answer]\n\n"
@@ -198,6 +211,10 @@ async def generate_qa_node(state: AgentState) -> AgentState:
         "A2: [Your second answer]\n\n"
         "Q3: [Your third question]\n"
         "A3: [Your third answer]\n\n"
+        "Q4: [Your fourth question]\n"
+        "A4: [Your fourth answer]\n\n"
+        "Q5: [Your fifth question]\n"
+        "A5: [Your fifth answer]\n\n"
         "SUMMARY:\n{summary}"
     )
 
@@ -258,7 +275,6 @@ async def process_paper(background_tasks: BackgroundTasks, file: UploadFile = Fi
 
     try:
         final_state = await app_graph.ainvoke({"file_path": temp_path})
-
         return {
             "status": "success",
             "filename": file.filename,
