@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { 
   UploadCloud, BrainCircuit, Loader2, FileCheck, 
   Target, FlaskConical, Sparkles, ChevronRight, 
-  ThumbsUp, AlertTriangle, Lightbulb, Quote
+  ThumbsUp, AlertTriangle, Lightbulb, Quote,
+  MessageSquare, Send, User, Bot,  BookOpen, X
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,10 +17,10 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { ScrollArea } from "@/components/ui/scroll-area";
+// Add BookOpen and X to your lucide-react imports
 
 
-const baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-
+const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:8000";
 
 // --- Types ---
 interface StructuredSummary {
@@ -32,6 +33,18 @@ interface StructuredSummary {
   tl_dr: string;
 }
 
+
+interface SourceChunk {
+  page: number;
+  text: string;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  sources?: SourceChunk[]; // <-- ADDED THIS
+}
+
 interface QAPair {
   question: string;
   answer: string;
@@ -42,8 +55,8 @@ interface ProcessedData {
   qa_pairs: QAPair[];
 }
 
+
 // --- Custom Markdown Renderer ---
-// This ensures Tailwind doesn't strip the styling from our Markdown elements
 const MarkdownRenderer = ({ content }: { content: string }) => {
   return (
     <ReactMarkdown
@@ -52,6 +65,28 @@ const MarkdownRenderer = ({ content }: { content: string }) => {
         strong: ({ children }) => <strong className="font-bold text-zinc-900 dark:text-zinc-100">{children}</strong>,
         ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1 marker:text-zinc-400">{children}</ul>,
         li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+        
+        // --- NEW: Custom renderer to catch and style citations ---
+        code: ({ inline, className, children, ...props }: any) => {
+          const text = String(children);
+          // If the text matches our citation format exactly: [Page X]
+          if (inline && /^\[Page \d+\]$/i.test(text)) {
+            return (
+              <span 
+                className="inline-flex items-center px-1.5 py-0.5 mx-1 rounded text-xs font-bold bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                title="Source Citation"
+              >
+                {text}
+              </span>
+            );
+          }
+          // Otherwise, render normal inline code blocks
+          return (
+            <code className="bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5 text-sm font-mono text-zinc-800 dark:text-zinc-200" {...props}>
+              {children}
+            </code>
+          );
+        }
       }}
     >
       {content}
@@ -64,12 +99,32 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ProcessedData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // --- NEW RAG STATE ---
+  const [docId, setDocId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"qa" | "chat">("qa");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatting, setIsChatting] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Add these right below your other RAG states (around line 75)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [activeSources, setActiveSources] = useState<SourceChunk[]>([]);
+
+  // Auto-scroll chat to bottom
+  useEffect(() => {
+    if (activeTab === "chat") {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatMessages, activeTab]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
       setResult(null);
+      setDocId(null);
       setError(null);
+      setChatMessages([]);
     }
   };
 
@@ -92,10 +147,41 @@ export default function Home() {
 
       const data = await response.json();
       setResult(data.data);
+      setDocId(data.doc_id); // Save the document ID for chat
+      setChatMessages([
+        { role: "assistant", text: `Hello! I've analyzed **${file.name}**. What specific questions do you have about it?` }
+      ]);
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !docId) return;
+
+    const userMsg = chatInput.trim();
+    setChatInput("");
+    setChatMessages(prev => [...prev, { role: "user", text: userMsg }]);
+    setIsChatting(true);
+
+    try {
+      const response = await fetch(`${baseUrl}/chat/${docId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: userMsg }),
+      });
+
+      if (!response.ok) throw new Error("Chat failed");
+
+      const data = await response.json();
+      setChatMessages(prev => [...prev, { role: "assistant", text: data.answer, sources: data.sources }]);
+    } catch (err: any) {
+      setChatMessages(prev => [...prev, { role: "assistant", text: "⚠️ Connection error. Please try asking again." }]);
+    } finally {
+      setIsChatting(false);
     }
   };
 
@@ -112,7 +198,7 @@ export default function Home() {
             DistillAPI Explorer
           </h1>
           <p className="text-zinc-500 dark:text-zinc-400 max-w-xl mx-auto text-lg">
-            Upload any research paper. Our LangGraph agent will digest the PDF, extract the core methodology, and generate study questions.
+            Upload any research paper. Our agent will digest the PDF, extract the core methodology, and let you chat directly with the text.
           </p>
         </div>
 
@@ -273,33 +359,182 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Right Column: Q&A */}
+            {/* Right Column: Assistant (QA & Chat) */}
             <div className="lg:col-span-5">
               <div className="sticky top-6">
-                <Card className="shadow-lg border-zinc-200/50 dark:border-zinc-800/50">
-                  <CardHeader className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-800/50">
-                    <CardTitle className="flex items-center gap-2 text-lg">
-                      <BrainCircuit className="w-5 h-5 text-indigo-500" />
-                      Knowledge Check
-                    </CardTitle>
-                    <CardDescription>Generated questions to test your comprehension.</CardDescription>
+                <Card className="shadow-lg border-zinc-200/50 dark:border-zinc-800/50 flex flex-col h-187.5">
+                  
+                  {/* Assistant Header & Tabs */}
+                  <CardHeader className="bg-zinc-50 dark:bg-zinc-900/50 border-b border-zinc-100 dark:border-zinc-800/50 pb-0">
+                    <div className="flex space-x-4">
+                      <button
+                        onClick={() => setActiveTab("qa")}
+                        className={`pb-3 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${
+                          activeTab === "qa" 
+                            ? "border-indigo-500 text-indigo-600 dark:text-indigo-400" 
+                            : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        }`}
+                      >
+                        <BrainCircuit className="w-4 h-4" /> Knowledge Check
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("chat")}
+                        className={`pb-3 text-sm font-semibold border-b-2 transition-colors flex items-center gap-2 ${
+                          activeTab === "chat" 
+                            ? "border-indigo-500 text-indigo-600 dark:text-indigo-400" 
+                            : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        }`}
+                      >
+                        <MessageSquare className="w-4 h-4" /> Chat with Paper
+                      </button>
+                    </div>
                   </CardHeader>
-                  <CardContent className="p-2">
-                    <ScrollArea className="h-[600px] px-4 py-2">
-                      <Accordion type="single" collapsible className="w-full">
-                        {(result.qa_pairs || []).map((qa, index) => (
-                          <AccordionItem key={index} value={`item-${index}`} className="border-b-zinc-100 dark:border-zinc-800/50">
-                            <AccordionTrigger className="text-left font-semibold text-sm hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors py-4">
-                              <MarkdownRenderer content={qa.question} />
-                            </AccordionTrigger>
-                            <AccordionContent className="text-zinc-600 dark:text-zinc-400 text-sm leading-relaxed bg-zinc-50 dark:bg-zinc-900/30 p-4 rounded-lg mt-1 mb-2 border border-zinc-100 dark:border-zinc-800">
-                              <MarkdownRenderer content={qa.answer} />
-                            </AccordionContent>
-                          </AccordionItem>
-                        ))}
-                      </Accordion>
-                    </ScrollArea>
-                  </CardContent>
+
+                  {/* Tab Content: Q&A */}
+                  {activeTab === "qa" && (
+                    <CardContent className="flex-1 p-0 overflow-hidden">
+                      <ScrollArea className="h-full px-6 py-4">
+                        <Accordion type="single" collapsible className="w-full">
+                          {(result.qa_pairs || []).map((qa, index) => (
+                            <AccordionItem key={index} value={`item-${index}`} className="border-b-zinc-100 dark:border-zinc-800/50">
+                              <AccordionTrigger className="text-left font-semibold text-sm hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors py-4">
+                                <MarkdownRenderer content={qa.question} />
+                              </AccordionTrigger>
+                              <AccordionContent className="text-zinc-600 dark:text-zinc-400 text-sm leading-relaxed bg-zinc-50 dark:bg-zinc-900/30 p-4 rounded-lg mt-1 mb-2 border border-zinc-100 dark:border-zinc-800">
+                                <MarkdownRenderer content={qa.answer} />
+                              </AccordionContent>
+                            </AccordionItem>
+                          ))}
+                        </Accordion>
+                      </ScrollArea>
+                    </CardContent>
+                  )}
+
+                  {/* Tab Content: Chat & Sidebar Layout */}
+                  {activeTab === "chat" && (
+                    <div className="flex flex-col flex-1 overflow-hidden min-h-0 relative">
+                      
+                      {/* Main Chat Area */}
+                      <div className="flex-1 overflow-y-auto px-6 py-4 scroll-smooth">
+                        <div className="space-y-6">
+                          {chatMessages.map((msg, idx) => (
+                            <div key={idx} className={`flex gap-3 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                              {msg.role === "assistant" && (
+                                <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center shrink-0 mt-1">
+                                  <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                                </div>
+                              )}
+                              
+                              <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
+                                <div 
+                                  className={`text-sm leading-relaxed p-3 rounded-2xl ${
+                                    msg.role === "user" 
+                                      ? "bg-indigo-600 text-white rounded-tr-sm shadow-sm" 
+                                      : "bg-zinc-100 dark:bg-zinc-800/80 text-zinc-800 dark:text-zinc-200 rounded-tl-sm border border-zinc-200/50 dark:border-zinc-700/50"
+                                  }`}
+                                >
+                                  <MarkdownRenderer content={msg.text} />
+                                </div>
+
+                                {/* NEW: View Sources Button for Assistant */}
+                                {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
+                                  <button
+                                    onClick={() => {
+                                      setActiveSources(msg.sources!);
+                                      setIsSidebarOpen(true);
+                                    }}
+                                    className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-indigo-600 dark:text-zinc-400 dark:hover:text-indigo-400 transition-colors px-1"
+                                  >
+                                    <BookOpen className="w-3.5 h-3.5" />
+                                    View 5 Sources
+                                  </button>
+                                )}
+                              </div>
+
+                              {msg.role === "user" && (
+                                <div className="w-8 h-8 rounded-full bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center shrink-0 mt-1">
+                                  <User className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                          
+                          {isChatting && (
+                            <div className="flex gap-3 justify-start">
+                               <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 flex items-center justify-center shrink-0 mt-1">
+                                  <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                                </div>
+                              <div className="bg-zinc-100 dark:bg-zinc-800/80 p-4 rounded-2xl rounded-tl-sm flex items-center gap-1 border border-zinc-200/50 dark:border-zinc-700/50">
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce" />
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:0.4s]" />
+                              </div>
+                            </div>
+                          )}
+                          <div ref={messagesEndRef} className="h-2" />
+                        </div>
+                      </div>
+                      
+                      {/* Chat Input */}
+                      <div className="p-4 bg-zinc-50 dark:bg-zinc-950 border-t border-zinc-100 dark:border-zinc-800 shrink-0 z-10">
+                        <form onSubmit={handleSendMessage} className="flex gap-2">
+                          <input
+                            type="text"
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            placeholder="Ask a question about the paper..."
+                            disabled={isChatting}
+                            className="flex-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all shadow-sm"
+                          />
+                          <Button 
+                            type="submit" 
+                            disabled={isChatting || !chatInput.trim()}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 px-4 shadow-sm"
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
+                        </form>
+                      </div>
+
+                      {/* NEW: Sliding Sources Sidebar */}
+                      <div 
+                        className={`absolute inset-y-0 right-0 w-full md:w-80 bg-white dark:bg-zinc-950 border-l border-zinc-200 dark:border-zinc-800 shadow-2xl transition-transform duration-300 ease-in-out z-20 flex flex-col ${
+                          isSidebarOpen ? "translate-x-0" : "translate-x-full"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between p-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 shrink-0">
+                          <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-semibold text-sm">
+                            <BookOpen className="w-4 h-4" />
+                            Source References
+                          </div>
+                          <button 
+                            onClick={() => setIsSidebarOpen(false)}
+                            className="p-1 rounded-md hover:bg-zinc-200 dark:hover:bg-zinc-800 text-zinc-500 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                        
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                          {activeSources.map((source, idx) => (
+                            <div key={idx} className="bg-zinc-50 dark:bg-zinc-900/50 rounded-lg border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+                              <div className="bg-zinc-100 dark:bg-zinc-800/80 px-3 py-1.5 text-xs font-bold text-zinc-600 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center">
+                                <span>Reference {idx + 1}</span>
+                                <span className="bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded text-[10px] uppercase tracking-wider">
+                                  Page {source.page}
+                                </span>
+                              </div>
+                              <div className="p-3 text-xs leading-relaxed text-zinc-700 dark:text-zinc-300 font-mono">
+                                {source.text}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                    </div>
+                  )}
+
                 </Card>
               </div>
             </div>
