@@ -149,7 +149,7 @@ async def load_pdf_node(state: AgentState) -> AgentState:
     return {"raw_text": raw_text}
 
 async def chunk_text_node(state: AgentState) -> AgentState:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=400)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=400)
     chunks = await asyncio.to_thread(splitter.split_text, state["raw_text"])
     return {"chunks": chunks}
 
@@ -179,11 +179,13 @@ async def summarize_node(state: AgentState) -> AgentState:
 async def generate_qa_node(state: AgentState) -> AgentState:
     prompt = PromptTemplate.from_template(
         "You are an expert academic tutor. Your goal is to educate a reader who has NOT read the original paper.\n\n"
-        "Generate exactly 5 insightful question-answer pairs that break down the paper's core concepts, methodology, and implications.\n\n"
+        "Generate exactly '5' insightful question-answer pairs that break down the paper's core concepts, methodology, and implications.\n\n"
         "CRITICAL INSTRUCTIONS:\n"
-        "1. Act as a 'guided tour'. The questions should logically flow from basic understanding to deep technical nuances.\n"
+        "1. Act as a 'guided tour' and 'research scholar'. The questions should logically flow from medium understanding to deep technical nuances.\n"
         "2. Anticipate confusion. Ask 'Why did they use this specific method?' or 'How does this solve the core problem?'\n"
-        "3. The answers MUST be highly descriptive, easy to understand, and provide enough context that a complete beginner grasps the paper's true value.\n\n"
+        "3. The answers MUST be highly descriptive, easy to understand, and provide enough context that a complete beginner grasps the paper's true value.\n"
+        "4. Every question must challenge the novelty of the research. Don't just ask what the authors did; ask 'How does this approach specifically outperform previous industry standards or existing research mentioned in the paper?' The goal is to highlight the 'Gap' the authors are filling so the reader understands why this paper was worth writing in the first place.\n"
+        "An expert scholar knows that no solution is perfect. At least one question MUST focus on the limitations, trade-offs, or specific conditions under which this methodology might fail. Ask 'What are the inherent costs (computational, financial, or accuracy-wise) of this new method, and in what scenarios would the traditional approach still be preferred?'\n\n"
         "You MUST format your response strictly like this:\n"
         "Q1: [Your first question]\n"
         "A1: [Your first answer]\n\n"
